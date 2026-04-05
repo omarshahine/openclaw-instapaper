@@ -8,7 +8,10 @@
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { type Static } from "@sinclair/typebox";
-import { execFileSync } from "child_process";
+import { execFileSync, execFile } from "child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 import { CLIRunner } from "../lib/cli-runner.js";
 import {
   listSchema,
@@ -139,11 +142,66 @@ export default definePluginEntry({
   register(api) {
     const config = api.pluginConfig as PluginConfig | undefined;
 
+    // -- Preflight: check binary and auth on plugin load --
+    let binaryPath: string | null = null;
+    let preflightError: string | null = null;
+
+    try {
+      binaryPath = execFileSync("which", ["instapaper-cli"], { encoding: "utf8" }).trim() || null;
+    } catch {
+      binaryPath = null;
+    }
+
+    if (!binaryPath) {
+      preflightError =
+        "instapaper-cli binary not found. Install it:\n" +
+        "  brew tap vburojevic/tap && brew install instapaper-cli\n\n" +
+        "Then authenticate (one-time):\n" +
+        "  export INSTAPAPER_CONSUMER_KEY=\"your-key\"\n" +
+        "  export INSTAPAPER_CONSUMER_SECRET=\"your-secret\"\n" +
+        "  printf '%s' \"password\" | instapaper-cli auth login -username \"you@example.com\" -password-stdin\n\n" +
+        "Get consumer credentials at: https://www.instapaper.com/main/request_oauth_consumer_token";
+    }
+
     function getCLI(): CLIRunner | null {
+      if (preflightError) return null;
       const consumerKey = resolveConfigValue(config?.consumerKey, "INSTAPAPER_CONSUMER_KEY");
       const consumerSecret = resolveConfigValue(config?.consumerSecret, "INSTAPAPER_CONSUMER_SECRET");
       if (!consumerKey || !consumerSecret) return null;
-      return new CLIRunner(consumerKey, consumerSecret);
+      return new CLIRunner(consumerKey, consumerSecret, binaryPath || "instapaper-cli");
+    }
+
+    function getCliOrError(): { cli: CLIRunner | null; error: string | null } {
+      if (preflightError) return { cli: null, error: preflightError };
+      const cli = getCLI();
+      if (!cli) {
+        return {
+          cli: null,
+          error:
+            "Instapaper consumer key and secret not configured.\n\n" +
+            "Configure via environment variables:\n" +
+            "  INSTAPAPER_CONSUMER_KEY=your-key\n" +
+            "  INSTAPAPER_CONSUMER_SECRET=your-secret\n\n" +
+            "Or via plugin config:\n" +
+            "  openclaw config set plugins.entries.instapaper-cli.config.consumerKey '${INSTAPAPER_CONSUMER_KEY}'\n" +
+            "  openclaw config set plugins.entries.instapaper-cli.config.consumerSecret '${INSTAPAPER_CONSUMER_SECRET}'\n\n" +
+            "Get consumer credentials at: https://www.instapaper.com/main/request_oauth_consumer_token",
+        };
+      }
+      return { cli, error: null };
+    }
+
+    /** Wrap a handler call with CLI resolution and error handling. */
+    async function withCli<T extends Record<string, unknown>>(
+      handler: (cli: CLIRunner) => Promise<T>
+    ) {
+      const { cli, error } = getCliOrError();
+      if (!cli) return errorResult(error!);
+      try {
+        return toToolResult(await handler(cli));
+      } catch (e: unknown) {
+        return errorResult(e instanceof Error ? e.message : String(e));
+      }
     }
 
     // -- Bookmark tools --
@@ -154,13 +212,7 @@ export default definePluginEntry({
       description: "List Instapaper bookmarks. Default: unread folder, 25 items.",
       parameters: listSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleList(params as ListParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleList(params as ListParams, cli));
       },
     });
 
@@ -170,13 +222,7 @@ export default definePluginEntry({
       description: "Save a URL to Instapaper with optional title, folder, and tags.",
       parameters: addSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleAdd(params as AddParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleAdd(params as AddParams, cli));
       },
     });
 
@@ -186,13 +232,7 @@ export default definePluginEntry({
       description: "Bulk import multiple URLs into Instapaper.",
       parameters: importSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleImport(params as ImportParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleImport(params as ImportParams, cli));
       },
     });
 
@@ -202,13 +242,7 @@ export default definePluginEntry({
       description: "Archive a bookmark by ID.",
       parameters: archiveSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleArchive(params as ArchiveParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleArchive(params as ArchiveParams, cli));
       },
     });
 
@@ -218,13 +252,7 @@ export default definePluginEntry({
       description: "Unarchive a bookmark by ID.",
       parameters: unarchiveSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleUnarchive(params as ArchiveParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleUnarchive(params as ArchiveParams, cli));
       },
     });
 
@@ -234,13 +262,7 @@ export default definePluginEntry({
       description: "Star a bookmark by ID.",
       parameters: starSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleStar(params as ArchiveParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleStar(params as ArchiveParams, cli));
       },
     });
 
@@ -250,13 +272,7 @@ export default definePluginEntry({
       description: "Unstar a bookmark by ID.",
       parameters: unstarSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleUnstar(params as ArchiveParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleUnstar(params as ArchiveParams, cli));
       },
     });
 
@@ -266,13 +282,7 @@ export default definePluginEntry({
       description: "Move a bookmark to a different folder.",
       parameters: moveSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleMove(params as MoveParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleMove(params as MoveParams, cli));
       },
     });
 
@@ -282,13 +292,7 @@ export default definePluginEntry({
       description: "Permanently delete a bookmark. This cannot be undone.",
       parameters: deleteSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleDelete(params as ArchiveParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleDelete(params as ArchiveParams, cli));
       },
     });
 
@@ -298,13 +302,7 @@ export default definePluginEntry({
       description: "Get the full article text/HTML for a bookmark.",
       parameters: textSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleText(params as TextParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleText(params as TextParams, cli));
       },
     });
 
@@ -316,13 +314,7 @@ export default definePluginEntry({
       description: "List all Instapaper folders.",
       parameters: foldersListSchema,
       async execute() {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleFoldersList(cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleFoldersList(cli));
       },
     });
 
@@ -332,13 +324,7 @@ export default definePluginEntry({
       description: "Create a new Instapaper folder.",
       parameters: foldersAddSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleFoldersAdd(params as FoldersAddParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleFoldersAdd(params as FoldersAddParams, cli));
       },
     });
 
@@ -348,13 +334,7 @@ export default definePluginEntry({
       description: "Delete an Instapaper folder. Articles are moved to Archive.",
       parameters: foldersDeleteSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleFoldersDelete(params as FoldersDeleteParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleFoldersDelete(params as FoldersDeleteParams, cli));
       },
     });
 
@@ -366,13 +346,7 @@ export default definePluginEntry({
       description: "List highlights for a bookmark.",
       parameters: highlightsListSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleHighlightsList(params as HighlightsListParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleHighlightsList(params as HighlightsListParams, cli));
       },
     });
 
@@ -382,13 +356,7 @@ export default definePluginEntry({
       description: "Add a highlight to a bookmark.",
       parameters: highlightsAddSchema,
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleHighlightsAdd(params as HighlightsAddParams, cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleHighlightsAdd(params as HighlightsAddParams, cli));
       },
     });
 
@@ -400,13 +368,7 @@ export default definePluginEntry({
       description: "List all tags across your Instapaper bookmarks.",
       parameters: tagsListSchema,
       async execute() {
-        const cli = getCLI();
-        if (!cli) return errorResult("No Instapaper credentials configured.");
-        try {
-          return toToolResult(await handleTagsList(cli));
-        } catch (e: unknown) {
-          return errorResult(e instanceof Error ? e.message : String(e));
-        }
+        return withCli((cli) => handleTagsList(cli));
       },
     });
   },
