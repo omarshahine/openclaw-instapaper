@@ -2,67 +2,170 @@
 
 OpenClaw plugin for [Instapaper](https://www.instapaper.com) reading list management.
 
-## Install
-
-```bash
-openclaw plugins install instapaper-cli
-```
-
 ## Prerequisites
 
-Requires the `instapaper-cli` binary:
+This plugin wraps the [`instapaper-cli`](https://github.com/vburojevic/instapaper-cli) Go binary. You must install and authenticate it before the plugin will work.
+
+### 1. Install instapaper-cli
 
 ```bash
 brew tap vburojevic/tap && brew install instapaper-cli
 ```
 
-Then authenticate (one-time):
+Verify: `instapaper-cli version`
+
+**Note**: The binary installs to `/opt/homebrew/bin/instapaper-cli` on Apple Silicon Macs. Ensure this is in your PATH.
+
+### 2. Get Instapaper API credentials
+
+Request an OAuth consumer token at https://www.instapaper.com/main/request_oauth_consumer_token
+
+You will receive a **consumer key** and **consumer secret**. These are app-level credentials required for every API call.
+
+### 3. Authenticate (one-time)
 
 ```bash
 export INSTAPAPER_CONSUMER_KEY="your-key"
 export INSTAPAPER_CONSUMER_SECRET="your-secret"
-printf '%s' "password" | instapaper-cli auth login -username "you@example.com" -password-stdin
+printf '%s' "your-password" | instapaper-cli auth login -username "you@example.com" -password-stdin
 ```
 
-Get your consumer key/secret from https://www.instapaper.com/main/request_oauth_consumer_token
+This exchanges your credentials for OAuth tokens stored locally in `~/.config/ip/`. You only need to do this once.
+
+Verify: `instapaper-cli auth status` (should show `logged_in: true`)
+
+**Note**: Instapaper passwords are optional. If your account has no password, any value works.
+
+## Install
+
+### From ClawHub (published)
+
+```bash
+openclaw plugins install instapaper-cli
+```
+
+### Local development (symlink)
+
+```bash
+openclaw plugins install -l ~/GitHub/openclaw-instapaper
+```
+
+This creates a symlink so `git pull` updates are immediately live.
 
 ## Configuration
 
-### Option A: Environment variables (recommended)
+The plugin needs your consumer key and secret at runtime to sign API requests. Configure them through one of these methods:
+
+### Option A: Environment variable (recommended)
 
 ```bash
 # Add to ~/.openclaw/.env (chmod 600)
 INSTAPAPER_CONSUMER_KEY=your-key
 INSTAPAPER_CONSUMER_SECRET=your-secret
-```
 
-### Option B: Plugin config with env interpolation
-
-```bash
+# Reference via env interpolation in plugin config
 openclaw config set plugins.entries.instapaper-cli.config.consumerKey '${INSTAPAPER_CONSUMER_KEY}'
 openclaw config set plugins.entries.instapaper-cli.config.consumerSecret '${INSTAPAPER_CONSUMER_SECRET}'
 ```
 
+### Option B: SecretRef object (env source)
+
+```bash
+openclaw config set plugins.entries.instapaper-cli.config.consumerKey \
+  '{"source":"env","provider":"env","id":"INSTAPAPER_CONSUMER_KEY"}' --strict-json
+openclaw config set plugins.entries.instapaper-cli.config.consumerSecret \
+  '{"source":"env","provider":"env","id":"INSTAPAPER_CONSUMER_SECRET"}' --strict-json
+```
+
+### Option C: SecretRef object (macOS Keychain)
+
+```bash
+# Store in Keychain
+security add-generic-password -s 'env/INSTAPAPER_CONSUMER_KEY' -a "$USER" -w 'your-key'
+security add-generic-password -s 'env/INSTAPAPER_CONSUMER_SECRET' -a "$USER" -w 'your-secret'
+
+# Configure SecretRef
+openclaw config set plugins.entries.instapaper-cli.config.consumerKey \
+  '{"source":"exec","provider":"keychain","id":"env/INSTAPAPER_CONSUMER_KEY"}' --strict-json
+openclaw config set plugins.entries.instapaper-cli.config.consumerSecret \
+  '{"source":"exec","provider":"keychain","id":"env/INSTAPAPER_CONSUMER_SECRET"}' --strict-json
+```
+
+### Plaintext fallback
+
+The plugin resolves credentials from these sources (checked in order):
+
+| Source | Details |
+|--------|---------|
+| Plugin config (SecretRef) | Resolved via env, file, or exec provider |
+| Plugin config (string) | `plugins.entries.instapaper-cli.config.consumerKey` |
+| Env var | `INSTAPAPER_CONSUMER_KEY` / `INSTAPAPER_CONSUMER_SECRET` |
+| macOS Keychain | `env/INSTAPAPER_CONSUMER_KEY` / `env/INSTAPAPER_CONSUMER_SECRET` |
+
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `instapaper_list` | List bookmarks (unread, starred, archive, or folder) |
-| `instapaper_add` | Save a URL to Instapaper |
-| `instapaper_import` | Bulk import multiple URLs |
-| `instapaper_archive` | Archive a bookmark |
-| `instapaper_unarchive` | Unarchive a bookmark |
-| `instapaper_star` | Star a bookmark |
-| `instapaper_unstar` | Unstar a bookmark |
-| `instapaper_move` | Move bookmark to folder |
-| `instapaper_delete` | Permanently delete a bookmark |
-| `instapaper_text` | Get full article HTML |
-| `instapaper_folders_list` | List all folders |
-| `instapaper_folders_add` | Create a folder |
-| `instapaper_folders_delete` | Delete a folder |
-| `instapaper_highlights_list` | List highlights for a bookmark |
-| `instapaper_highlights_add` | Add a highlight |
-| `instapaper_tags_list` | List all tags |
+### Bookmarks
+
+| Tool | Description | Key Parameters |
+|------|-------------|---------------|
+| `instapaper_list` | List bookmarks | `folder`, `limit`, `tag` |
+| `instapaper_add` | Save a URL | `url`, `title`, `folder`, `tags` |
+| `instapaper_import` | Bulk import URLs | `urls[]`, `folder`, `tags` |
+| `instapaper_archive` | Archive a bookmark | `bookmark_id` |
+| `instapaper_unarchive` | Unarchive a bookmark | `bookmark_id` |
+| `instapaper_star` | Star a bookmark | `bookmark_id` |
+| `instapaper_unstar` | Unstar a bookmark | `bookmark_id` |
+| `instapaper_move` | Move to folder | `bookmark_id`, `folder` |
+| `instapaper_delete` | Permanently delete | `bookmark_id` |
+| `instapaper_text` | Get article HTML | `bookmark_id` |
+
+### Folders
+
+| Tool | Description | Key Parameters |
+|------|-------------|---------------|
+| `instapaper_folders_list` | List all folders | (none) |
+| `instapaper_folders_add` | Create a folder | `title` |
+| `instapaper_folders_delete` | Delete a folder | `title` |
+
+### Highlights & Tags
+
+| Tool | Description | Key Parameters |
+|------|-------------|---------------|
+| `instapaper_highlights_list` | List highlights for a bookmark | `bookmark_id` |
+| `instapaper_highlights_add` | Add a highlight | `bookmark_id`, `text` |
+| `instapaper_tags_list` | List all tags | (none) |
+
+### Examples
+
+```
+instapaper_list { folder: "starred", limit: 10 }
+instapaper_add { url: "https://example.com/article", tags: "tech,ai" }
+instapaper_import { urls: ["https://a.com", "https://b.com"], folder: "Work" }
+instapaper_text { bookmark_id: 12345678 }
+instapaper_highlights_list { bookmark_id: 12345678 }
+```
+
+## Architecture
+
+All tools shell out to the `instapaper-cli` binary via Node.js `execFile`. The plugin:
+
+1. Resolves consumer key/secret from config, env vars, or keychain
+2. Passes them as environment variables to `execFile` (never touches shell history)
+3. Parses ndjson or JSON output from the CLI
+4. Returns structured results to OpenClaw
+
+The CLI handles OAuth 1.0a request signing (HMAC-SHA1) and token management internally. User OAuth tokens persist in `~/.config/ip/` from the one-time `auth login` step.
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `instapaper-cli not found` | Run `brew tap vburojevic/tap && brew install instapaper-cli`. Verify `/opt/homebrew/bin/instapaper-cli` exists. |
+| `No Instapaper credentials configured` | Configure consumer key/secret via one of the methods above. |
+| `auth_error` or 403 | Re-run `instapaper-cli auth login`. Tokens may have expired. |
+| Exit code 10 (rate limited) | Wait a few minutes. Instapaper enforces per-endpoint rate limits. |
+| Exit code 11 (premium required) | Some features (e.g., full-text search, >5 highlights/month) require Instapaper Premium. |
+| Empty results from `instapaper_list` | Your unread folder may be empty. Try `folder: "archive"` or `folder: "starred"`. |
 
 ## License
 
