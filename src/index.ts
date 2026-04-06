@@ -9,6 +9,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { type Static } from "@sinclair/typebox";
 import { execFileSync, execFile } from "child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -94,10 +95,29 @@ function isSecretRef(value: unknown): value is SecretRef {
   );
 }
 
+function resolveFileRef(provider: string, id: string): string | undefined {
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  const paths: Record<string, string> = { secrets: `${home}/.openclaw/secrets.json` };
+  const filePath = paths[provider];
+  if (!filePath) return undefined;
+  try {
+    let current: unknown = JSON.parse(readFileSync(filePath, "utf8"));
+    for (const part of id.replace(/^\//, "").split("/")) {
+      if (typeof current !== "object" || current === null) return undefined;
+      current = (current as Record<string, unknown>)[part];
+    }
+    return typeof current === "string" ? current : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveSecretRef(ref: SecretRef): string | undefined {
   switch (ref.source) {
     case "env":
       return process.env[ref.id] || undefined;
+    case "file":
+      return resolveFileRef(ref.provider, ref.id);
     case "exec":
       if (ref.provider === "keychain" || ref.provider === "security") {
         return keychainLookup(ref.id);

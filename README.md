@@ -39,7 +39,7 @@ The binary installs to `/opt/homebrew/bin/instapaper-cli` on Apple Silicon Macs.
 
 Request an OAuth consumer token at https://www.instapaper.com/main/request_oauth_consumer_token
 
-You will receive a **consumer key** and **consumer secret**. These are app-level credentials required for every API call.
+You will receive a **consumer key** and **consumer secret**. Keep these — you'll need them for authentication and plugin configuration.
 
 ### Authentication (one-time)
 
@@ -49,7 +49,7 @@ export INSTAPAPER_CONSUMER_SECRET="your-secret"
 printf '%s' "your-password" | instapaper-cli auth login -username "you@example.com" -password-stdin
 ```
 
-This exchanges your credentials for OAuth tokens stored locally in `~/.config/ip/`. You only need to do this once.
+This exchanges your credentials for OAuth tokens stored locally. You only need to do this once.
 
 Verify: `instapaper-cli auth status` (should show `logged_in: true`)
 
@@ -63,7 +63,7 @@ Instapaper passwords are optional. If your account has no password, any value wi
 openclaw plugins install instapaper-cli
 ```
 
-### Local development (symlink)
+Or for local development:
 
 ```bash
 openclaw plugins install -l ~/path/to/openclaw-instapaper
@@ -73,7 +73,7 @@ Symlink installs stay live with `git pull` updates.
 
 ### Security note
 
-This plugin uses Node.js `child_process.execFile` to call the `instapaper-cli` binary. OpenClaw's static analysis scanner flags this at install time. If prompted, review the source code and use:
+This plugin uses Node.js `execFile` (not shell exec) to call the `instapaper-cli` binary. OpenClaw's static analysis scanner flags this at install time. If prompted, review the source code and use:
 
 ```bash
 openclaw plugins install instapaper-cli --dangerously-force-unsafe-install
@@ -83,53 +83,70 @@ This is expected for any CLI-wrapper plugin. The plugin never executes arbitrary
 
 ## Configuration
 
-The plugin needs your consumer key and secret at runtime. Configure through one of these methods:
+The plugin needs your consumer key and secret at runtime to sign API requests. Choose one method:
 
-### Option A: Environment variable (recommended)
+### Option A: SecretRef via secrets.json (recommended)
 
-```bash
-# Add to ~/.openclaw/.env (chmod 600)
-INSTAPAPER_CONSUMER_KEY=your-key
-INSTAPAPER_CONSUMER_SECRET=your-secret
+Add your credentials to `~/.openclaw/secrets.json`:
 
-# Reference via env interpolation in plugin config
-openclaw config set plugins.entries.instapaper-cli.config.consumerKey '${INSTAPAPER_CONSUMER_KEY}'
-openclaw config set plugins.entries.instapaper-cli.config.consumerSecret '${INSTAPAPER_CONSUMER_SECRET}'
+```json
+{
+  "plugins": {
+    "instapaper": {
+      "consumerKey": "your-key",
+      "consumerSecret": "your-secret"
+    }
+  }
+}
 ```
 
-### Option B: SecretRef (env source)
+Then wire the SecretRefs:
 
 ```bash
 openclaw config set plugins.entries.instapaper-cli.config.consumerKey \
-  '{"source":"env","provider":"env","id":"INSTAPAPER_CONSUMER_KEY"}' --strict-json
+  --ref-source file --ref-provider secrets --ref-id /plugins/instapaper/consumerKey
 openclaw config set plugins.entries.instapaper-cli.config.consumerSecret \
-  '{"source":"env","provider":"env","id":"INSTAPAPER_CONSUMER_SECRET"}' --strict-json
+  --ref-source file --ref-provider secrets --ref-id /plugins/instapaper/consumerSecret
 ```
 
-### Option C: SecretRef (macOS Keychain)
+### Option B: macOS Keychain
 
 ```bash
-# Store in Keychain
 security add-generic-password -s 'env/INSTAPAPER_CONSUMER_KEY' -a "$USER" -w 'your-key'
 security add-generic-password -s 'env/INSTAPAPER_CONSUMER_SECRET' -a "$USER" -w 'your-secret'
 
-# Configure SecretRef
 openclaw config set plugins.entries.instapaper-cli.config.consumerKey \
   '{"source":"exec","provider":"keychain","id":"env/INSTAPAPER_CONSUMER_KEY"}' --strict-json
 openclaw config set plugins.entries.instapaper-cli.config.consumerSecret \
   '{"source":"exec","provider":"keychain","id":"env/INSTAPAPER_CONSUMER_SECRET"}' --strict-json
 ```
 
+### Option C: Environment variables
+
+```bash
+# Add to your gateway environment or ~/.openclaw/.env
+INSTAPAPER_CONSUMER_KEY=your-key
+INSTAPAPER_CONSUMER_SECRET=your-secret
+```
+
 ### Resolution order
 
 The plugin resolves credentials from these sources (first match wins):
 
-| Source | Details |
-|--------|---------|
-| Plugin config (SecretRef) | Resolved via env, file, or exec provider |
-| Plugin config (string) | Direct value or `${ENV_VAR}` interpolation |
-| Environment variable | `INSTAPAPER_CONSUMER_KEY` / `INSTAPAPER_CONSUMER_SECRET` |
-| macOS Keychain | `env/INSTAPAPER_CONSUMER_KEY` / `env/INSTAPAPER_CONSUMER_SECRET` |
+| Priority | Source | Details |
+|----------|--------|---------|
+| 1 | Plugin config (SecretRef) | Resolved via file, env, or exec provider |
+| 2 | Plugin config (string) | Direct value or env var interpolation |
+| 3 | Environment variable | `INSTAPAPER_CONSUMER_KEY` / `INSTAPAPER_CONSUMER_SECRET` |
+| 4 | macOS Keychain | `env/INSTAPAPER_CONSUMER_KEY` / `env/INSTAPAPER_CONSUMER_SECRET` |
+
+### Restart and verify
+
+```bash
+openclaw gateway restart
+```
+
+Test by asking your agent: "Save https://example.com to Instapaper"
 
 ## Tools
 
@@ -176,27 +193,25 @@ instapaper_highlights_list { bookmark_id: 12345678 }
 
 ## Architecture
 
-```
-User → OpenClaw tool call → Plugin (src/index.ts)
-  → resolves consumer key/secret from config/env/keychain
-  → execFile("instapaper-cli", args, { env: { KEY, SECRET } })
-  → parses ndjson/json output
-  → returns structured result to OpenClaw
-```
+All tools shell out to the `instapaper-cli` binary via `execFile`. The plugin:
 
-The `instapaper-cli` binary handles OAuth 1.0a request signing (HMAC-SHA1) and token management internally. User OAuth tokens persist in `~/.config/ip/` from the one-time `auth login` step.
+1. Resolves consumer key/secret from config, env vars, or keychain
+2. Passes them as environment variables to the CLI process (never touches shell history)
+3. Parses ndjson or JSON output from the CLI
+4. Returns structured results to OpenClaw
+
+The CLI handles OAuth 1.0a request signing (HMAC-SHA1) and token management internally. User OAuth tokens persist in `~/.config/ip/` from the one-time `auth login` step.
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| `instapaper-cli not found` | `brew tap vburojevic/tap && brew install instapaper-cli` |
-| `No Instapaper credentials configured` | Configure consumer key/secret (see Configuration above) |
-| `auth_error` or 403 | Re-run `instapaper-cli auth login`. Tokens may have expired. |
-| Blocked by dangerous-code detector | Use `--dangerously-force-unsafe-install` (see Security note) |
+| `instapaper-cli not found` | Run `brew tap vburojevic/tap && brew install instapaper-cli` |
+| `No Instapaper credentials configured` | Configure consumer key/secret via one of the methods above |
+| `HTTP 401` | Consumer key/secret may be swapped, or OAuth token expired. Re-run `auth login` with the correct consumer credentials set. |
 | Exit code 10 (rate limited) | Wait a few minutes. Instapaper enforces per-endpoint rate limits. |
-| Exit code 11 (premium required) | Some features require [Instapaper Premium](https://www.instapaper.com/premium). |
-| Empty results from `instapaper_list` | Unread folder may be empty. Try `folder: "archive"` or `folder: "starred"`. |
+| Exit code 11 (premium required) | Some features require Instapaper Premium. |
+| Empty results from `instapaper_list` | Try `folder: "archive"` or `folder: "starred"`. |
 
 ## License
 
