@@ -10,6 +10,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { type Static } from "@sinclair/typebox";
 import { execFileSync, execFile } from "child_process";
 import { readFileSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -95,18 +96,56 @@ function isSecretRef(value: unknown): value is SecretRef {
   );
 }
 
+/**
+ * Look up a file-based secret provider from openclaw.json, then resolve
+ * the id as a JSON pointer (mode=json) or return the whole file (mode=singleValue).
+ */
 function resolveFileRef(provider: string, id: string): string | undefined {
   const home = process.env.HOME || process.env.USERPROFILE || "";
-  const paths: Record<string, string> = { secrets: `${home}/.openclaw/secrets.json` };
-  const filePath = paths[provider];
-  if (!filePath) return undefined;
+  const configPath = pathResolve(home, ".openclaw", "openclaw.json");
   try {
-    let current: unknown = JSON.parse(readFileSync(filePath, "utf8"));
-    for (const part of id.replace(/^\//, "").split("/")) {
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    const providerDef = config?.secrets?.providers?.[provider];
+    if (!providerDef || providerDef.source !== "file") return undefined;
+
+    const rawPath: string = providerDef.path || "";
+    const filePath = rawPath.startsWith("~")
+      ? pathResolve(home, rawPath.slice(2))
+      : rawPath;
+    const contents = readFileSync(filePath, "utf8");
+
+    if (providerDef.mode === "singleValue") {
+      return id === "value" ? contents.trim() : undefined;
+    }
+
+    // mode=json: resolve id as JSON pointer (RFC 6901)
+    let current: unknown = JSON.parse(contents);
+    for (const raw of id.replace(/^\//, "").split("/")) {
+      const part = raw.replace(/~1/g, "/").replace(/~0/g, "~");
       if (typeof current !== "object" || current === null) return undefined;
       current = (current as Record<string, unknown>)[part];
     }
     return typeof current === "string" ? current : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Run an exec-based secret provider command and return stdout.
+ * Supports "keychain"/"security" (macOS Keychain) and generic commands.
+ */
+function resolveExecRef(provider: string, id: string): string | undefined {
+  if (provider === "keychain" || provider === "security") {
+    return keychainLookup(id);
+  }
+  // Generic exec: try running the provider as a command with the id as argument
+  try {
+    return execFileSync(provider, [id], {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    }).trim() || undefined;
   } catch {
     return undefined;
   }
@@ -119,10 +158,7 @@ function resolveSecretRef(ref: SecretRef): string | undefined {
     case "file":
       return resolveFileRef(ref.provider, ref.id);
     case "exec":
-      if (ref.provider === "keychain" || ref.provider === "security") {
-        return keychainLookup(ref.id);
-      }
-      return undefined;
+      return resolveExecRef(ref.provider, ref.id);
     default:
       return undefined;
   }
