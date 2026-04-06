@@ -31,42 +31,32 @@ Example: `instapaper-cli --json list -folder unread -limit 10`
 
 ## Publishing to ClawHub
 
-### Prerequisites
+### Automated (CI)
 
-- `clawhub` CLI installed: `npm install -g clawhub`
-- Authenticated: `clawhub login` (browser OAuth flow)
-- Verify: `clawhub whoami`
+Publishing is automated via GitHub Actions (`.github/workflows/publish-clawhub.yml`). To publish a new version:
 
-### Publish Script (preferred)
+```bash
+# 1. Bump version in package.json
+# 2. Commit and push
+# 3. Tag and push the tag
+git tag -a v1.1.0 -m "Description of changes"
+git push origin v1.1.0
+```
+
+The workflow extracts the version from the tag name (`v1.1.0` -> `1.1.0`) and the changelog from the tag annotation. It authenticates with the `CLAWHUB_TOKEN` repository secret.
+
+### Manual (fallback)
 
 ```bash
 ./publish-clawhub.sh --changelog "summary of changes"
 ```
 
-### Manual Publish Command
+Requires `clawhub` CLI installed (`npm install -g clawhub`) and authenticated (`clawhub login`).
 
-```bash
-clawhub package publish . \
-  --family code-plugin \
-  --name instapaper-cli \
-  --display-name Instapaper \
-  --version <version from package.json> \
-  --changelog "<summary of changes>" \
-  --tags "latest" \
-  --source-repo omarshahine/openclaw-instapaper \
-  --source-commit $(git rev-parse HEAD) \
-  --source-ref main
-```
-
-### Verify Publication
+### Verify / Install
 
 ```bash
 clawhub package inspect instapaper-cli
-```
-
-### Install (end user)
-
-```bash
 openclaw plugins install instapaper-cli
 ```
 
