@@ -1,6 +1,6 @@
 {
   "name": "instapaper-cli",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "OpenClaw plugin for Instapaper reading list management",
   "type": "module",
   "openclaw": {
@@ -46,7 +46,8 @@
     "node": ">=18"
   },
   "dependencies": {
-    "openclaw": "^2026.3.23"
+    "openclaw": "^2026.3.23",
+    "@sinclair/typebox": "^0.34.49"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
@@ -55,8 +56,7 @@
   "scripts": {
     "plugin:check": "npx --yes @openclaw/plugin-inspector inspect --no-openclaw",
     "plugin:ci": "npx --yes @openclaw/plugin-inspector ci --no-openclaw --runtime --mock-sdk --allow-execute",
-    "build": "tsc",
-    "prepare": "test -d dist || npm run build"
+    "build": "tsc"
   },
   "main": "./dist/src/index.js"
 }
