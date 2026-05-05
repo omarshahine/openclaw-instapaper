@@ -81,32 +81,21 @@ export async function handleAdd(args: AddArgs, cli: CLIRunner): Promise<HandlerR
 
 export async function handleImport(args: ImportArgs, cli: CLIRunner): Promise<HandlerResult> {
   const input = args.urls.join("\n");
-  const subArgs: string[] = ["-input", "-", "-input-format", "plain"];
+  const subArgs: string[] = ["import", "-input", "-", "-input-format", "plain"];
   if (args.folder) subArgs.push("-folder", args.folder);
   if (args.tags) subArgs.push("-tags", args.tags);
 
-  // Write URLs to stdin via a temp approach: pipe through echo
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileAsync = promisify(execFile);
-
-  try {
-    const childEnv: NodeJS.ProcessEnv = { ...process.env };
-    childEnv["INSTAPAPER_CONSUMER_KEY"] = process.env["INSTAPAPER_CONSUMER_KEY"];
-    childEnv["INSTAPAPER_CONSUMER_SECRET"] = process.env["INSTAPAPER_CONSUMER_SECRET"];
-    const child = execFileAsync("instapaper-cli", ["import", ...subArgs], {
-      env: childEnv,
-      timeout: 60000,
-    });
-    child.child.stdin?.write(input);
-    child.child.stdin?.end();
-    const { stdout } = await child;
-
-    return { success: true, message: stdout?.trim() || `Imported ${args.urls.length} URLs`, count: args.urls.length };
-  } catch (err: unknown) {
-    const error = err as { stderr?: string; message?: string };
-    return { success: false, error: error.stderr || error.message || "Import failed" };
+  // Use the same CLIRunner that the rest of the handlers use, so the
+  // resolved consumer credentials and minimal-env policy stay consistent.
+  const result = await cli.runWithStdin(subArgs, input, { timeout: 60_000 });
+  if (!result.success) {
+    return { success: false, error: result.error || "Import failed" };
   }
+  return {
+    success: true,
+    message: result.stdout || `Imported ${args.urls.length} URLs`,
+    count: args.urls.length,
+  };
 }
 
 export async function handleArchive(args: BookmarkIdArgs, cli: CLIRunner): Promise<HandlerResult> {

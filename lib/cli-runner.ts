@@ -5,7 +5,7 @@
  * variables and parses ndjson/json output.
  */
 
-import { runCli } from "./safe-shell.js";
+import { runCli, runCliWithStdin } from "./safe-shell.js";
 import type { CLIResult } from "./types.js";
 
 export class CLIRunner {
@@ -20,6 +20,23 @@ export class CLIRunner {
   }
 
   /**
+   * Build a minimal child env: parent PATH + HOME (so `instapaper-cli`
+   * and any of its sub-tools can find their bin dir / config) + the
+   * Instapaper consumer credentials we resolved at construction time.
+   * Notably this does NOT pass the rest of process.env to the child.
+   */
+  private childEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    if (process.env["PATH"]) env["PATH"] = process.env["PATH"];
+    if (process.env["HOME"]) env["HOME"] = process.env["HOME"];
+    if (process.env["USERPROFILE"]) env["USERPROFILE"] = process.env["USERPROFILE"];
+    if (process.env["TMPDIR"]) env["TMPDIR"] = process.env["TMPDIR"];
+    env["INSTAPAPER_CONSUMER_KEY"] = this.consumerKey;
+    env["INSTAPAPER_CONSUMER_SECRET"] = this.consumerSecret;
+    return env;
+  }
+
+  /**
    * Run an instapaper-cli command with global and subcommand args.
    *
    * @param globalArgs - Flags before the subcommand (e.g., ["--json"])
@@ -31,11 +48,8 @@ export class CLIRunner {
     const args = [...globalArgs, ...cmdParts, ...subArgs];
 
     try {
-      const childEnv: NodeJS.ProcessEnv = { ...process.env };
-      childEnv["INSTAPAPER_CONSUMER_KEY"] = this.consumerKey;
-      childEnv["INSTAPAPER_CONSUMER_SECRET"] = this.consumerSecret;
       const { stdout, stderr } = await runCli(this.binaryPath, args, {
-        env: childEnv,
+        env: this.childEnv(),
         timeout: 30_000,
         maxBuffer: 10 * 1024 * 1024, // 10MB for large exports
       });
@@ -56,6 +70,41 @@ export class CLIRunner {
         stdout: error.stdout,
         stderr: error.stderr,
         exitCode: error.exitCode,
+      };
+    }
+  }
+
+  /**
+   * Run a command, piping `stdin` text into the binary. Returns stdout on
+   * success. Used by handlers that need to feed bulk input (e.g. the
+   * import handler streams URLs in via stdin).
+   */
+  async runWithStdin(
+    args: string[],
+    stdin: string,
+    opts: { timeout?: number } = {},
+  ): Promise<CLIResult> {
+    try {
+      const { stdout, stderr } = await runCliWithStdin(this.binaryPath, args, stdin, {
+        env: this.childEnv(),
+        timeout: opts.timeout ?? 60_000,
+      });
+      return { success: true, stdout: stdout.trim(), stderr: stderr.trim(), exitCode: 0 };
+    } catch (err: unknown) {
+      const error = err as { code?: string | number; stdout?: string; stderr?: string; message?: string };
+      if (error.code === "ENOENT") {
+        return {
+          success: false,
+          error: "instapaper-cli not found. Install: brew tap vburojevic/tap && brew install instapaper-cli",
+          exitCode: 127,
+        };
+      }
+      return {
+        success: false,
+        error: error.stderr || error.message || "Unknown error",
+        stdout: error.stdout,
+        stderr: error.stderr,
+        exitCode: typeof error.code === "number" ? error.code : undefined,
       };
     }
   }
