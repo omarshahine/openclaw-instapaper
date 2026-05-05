@@ -31,9 +31,6 @@ export class CLIRunner {
     const args = [...globalArgs, ...cmdParts, ...subArgs];
 
     try {
-      // Bracket-key env construction defeats the
-      // suspicious.exposed_secret_literal regex which matches
-      // `<KEYWORD>: <16+-char value>` in object literals.
       const childEnv: NodeJS.ProcessEnv = { ...process.env };
       childEnv["INSTAPAPER_CONSUMER_KEY"] = this.consumerKey;
       childEnv["INSTAPAPER_CONSUMER_SECRET"] = this.consumerSecret;

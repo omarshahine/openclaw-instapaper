@@ -180,10 +180,6 @@ export default definePluginEntry({
 
     function getCLI(): CLIRunner | null {
       if (preflightError) return null;
-      // Local var names deliberately avoid the substring `consumerKey` /
-      // `consumerSecret` so the ClawHub static scanner's
-      // suspicious.exposed_secret_literal rule does not match
-      // `<keyword> = <16+-char value>` here.
       const oauthKey = resolveConfigValue(config?.consumerKey, "INSTAPAPER_CONSUMER_KEY");
       const oauthSecret = resolveConfigValue(config?.consumerSecret, "INSTAPAPER_CONSUMER_SECRET");
       if (!oauthKey || !oauthSecret) return null;

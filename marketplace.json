@@ -8,7 +8,7 @@
       "name": "instapaper-cli",
       "source": ".",
       "description": "Manage your Instapaper reading list: bookmarks, folders, highlights, tags, and article export",
-      "version": "1.1.7"
+      "version": "1.1.8"
     }
   ]
 }
