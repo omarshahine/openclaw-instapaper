@@ -8,13 +8,10 @@
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { type Static } from "@sinclair/typebox";
-import { execFileSync, execFile } from "child_process";
 import { readFileSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 import { CLIRunner } from "../lib/cli-runner.js";
+import { whichBinary } from "../lib/safe-shell.js";
 import {
   listSchema,
   addSchema,
@@ -64,7 +61,7 @@ type HighlightsListParams = Static<typeof highlightsListSchema>;
 type HighlightsAddParams = Static<typeof highlightsAddSchema>;
 
 interface SecretRef {
-  source: "env" | "file" | "exec";
+  source: "env" | "file";
   provider: string;
   id: string;
 }
@@ -72,18 +69,6 @@ interface SecretRef {
 interface PluginConfig {
   consumerKey?: string | SecretRef;
   consumerSecret?: string | SecretRef;
-}
-
-function keychainLookup(service: string): string | undefined {
-  try {
-    return execFileSync(
-      "security",
-      ["find-generic-password", "-s", service, "-w"],
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
-    ).trim() || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function isSecretRef(value: unknown): value is SecretRef {
@@ -131,34 +116,12 @@ function resolveFileRef(provider: string, id: string): string | undefined {
   }
 }
 
-/**
- * Run an exec-based secret provider command and return stdout.
- * Supports "keychain"/"security" (macOS Keychain) and generic commands.
- */
-function resolveExecRef(provider: string, id: string): string | undefined {
-  if (provider === "keychain" || provider === "security") {
-    return keychainLookup(id);
-  }
-  // Generic exec: try running the provider as a command with the id as argument
-  try {
-    return execFileSync(provider, [id], {
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 5000,
-    }).trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function resolveSecretRef(ref: SecretRef): string | undefined {
   switch (ref.source) {
     case "env":
       return process.env[ref.id] || undefined;
     case "file":
       return resolveFileRef(ref.provider, ref.id);
-    case "exec":
-      return resolveExecRef(ref.provider, ref.id);
     default:
       return undefined;
   }
@@ -171,7 +134,7 @@ function resolveConfigValue(configValue: string | SecretRef | undefined, envFall
   }
   if (typeof configValue === "string" && configValue) return configValue;
   if (process.env[envFallback]) return process.env[envFallback];
-  return keychainLookup(`env/${envFallback}`);
+  return undefined;
 }
 
 /** Helper to wrap a handler result as tool output. */
@@ -202,11 +165,7 @@ export default definePluginEntry({
     let binaryPath: string | null = null;
     let preflightError: string | null = null;
 
-    try {
-      binaryPath = execFileSync("which", ["instapaper-cli"], { encoding: "utf8" }).trim() || null;
-    } catch {
-      binaryPath = null;
-    }
+    binaryPath = whichBinary("instapaper-cli");
 
     if (!binaryPath) {
       preflightError =

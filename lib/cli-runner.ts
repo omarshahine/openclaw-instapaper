@@ -5,11 +5,8 @@
  * variables and parses ndjson/json output.
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { runCli } from "./safe-shell.js";
 import type { CLIResult } from "./types.js";
-
-const execFileAsync = promisify(execFile);
 
 export class CLIRunner {
   private consumerKey: string;
@@ -34,13 +31,13 @@ export class CLIRunner {
     const args = [...globalArgs, ...cmdParts, ...subArgs];
 
     try {
-      const { stdout, stderr } = await execFileAsync(this.binaryPath, args, {
+      const { stdout, stderr } = await runCli(this.binaryPath, args, {
         env: {
           ...process.env,
           INSTAPAPER_CONSUMER_KEY: this.consumerKey,
           INSTAPAPER_CONSUMER_SECRET: this.consumerSecret,
         },
-        timeout: 30000,
+        timeout: 30_000,
         maxBuffer: 10 * 1024 * 1024, // 10MB for large exports
       });
 

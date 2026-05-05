@@ -109,19 +109,7 @@ openclaw config set plugins.entries.instapaper-cli.config.consumerSecret \
   --ref-source file --ref-provider secrets --ref-id /plugins/instapaper/consumerSecret
 ```
 
-### Option B: macOS Keychain
-
-```bash
-security add-generic-password -s 'env/INSTAPAPER_CONSUMER_KEY' -a "$USER" -w 'your-key'
-security add-generic-password -s 'env/INSTAPAPER_CONSUMER_SECRET' -a "$USER" -w 'your-secret'
-
-openclaw config set plugins.entries.instapaper-cli.config.consumerKey \
-  '{"source":"exec","provider":"keychain","id":"env/INSTAPAPER_CONSUMER_KEY"}' --strict-json
-openclaw config set plugins.entries.instapaper-cli.config.consumerSecret \
-  '{"source":"exec","provider":"keychain","id":"env/INSTAPAPER_CONSUMER_SECRET"}' --strict-json
-```
-
-### Option C: Environment variables
+### Option B: Environment variables
 
 ```bash
 # Add to your gateway environment or ~/.openclaw/.env
@@ -135,10 +123,9 @@ The plugin resolves credentials from these sources (first match wins):
 
 | Priority | Source | Details |
 |----------|--------|---------|
-| 1 | Plugin config (SecretRef) | Resolved via file, env, or exec provider |
+| 1 | Plugin config (SecretRef) | Resolved via `env` or `file` provider |
 | 2 | Plugin config (string) | Direct value or env var interpolation |
 | 3 | Environment variable | `INSTAPAPER_CONSUMER_KEY` / `INSTAPAPER_CONSUMER_SECRET` |
-| 4 | macOS Keychain | `env/INSTAPAPER_CONSUMER_KEY` / `env/INSTAPAPER_CONSUMER_SECRET` |
 
 ### Restart and verify
 
