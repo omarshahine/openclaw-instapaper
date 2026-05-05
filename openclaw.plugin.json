@@ -2,6 +2,13 @@
   "id": "instapaper-cli",
   "name": "Instapaper",
   "description": "Manage your Instapaper reading list: bookmarks, folders, highlights, tags, and article export",
+  "requires": {
+    "binaries": ["instapaper-cli"],
+    "envVars": [
+      { "name": "INSTAPAPER_CONSUMER_KEY", "required": true, "description": "Instapaper OAuth consumer key" },
+      { "name": "INSTAPAPER_CONSUMER_SECRET", "required": true, "description": "Instapaper OAuth consumer secret" }
+    ]
+  },
   "skills": [
     "skills/instapaper"
   ],
